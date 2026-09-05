@@ -138,6 +138,9 @@
 #define WOLFSSL_SHA3
 #define WOLFSSL_SHAKE128
 #define WOLFSSL_SHAKE256
+/* Newer wolfSSL gates the pre-FIPS-204 wc_MlDsaKey_Sign/Verify API (used by
+ * wh_server_crypto.c) behind this define */
+#define WOLFSSL_MLDSA_NO_CTX
 
 /* Ed25519 Options */
 #define HAVE_ED25519

@@ -221,6 +221,9 @@ SRC_C +=  $(wildcard $(WOLFHSM_DIR)/src/*.c)
 # wolfHSM port/HAL code
 SRC_C +=  $(wildcard $(WOLFHSM_PORT_DIR)/*.c)
 
+# Intel MEI transport (fragmentation core, Linux MEI backend, simulator)
+SRC_C +=  $(wildcard $(WOLFHSM_DIR)/port/intel/mei/*.c)
+
 # Test source files
 SRC_C +=  $(wildcard $(PROJECT_DIR)/*.c)
 

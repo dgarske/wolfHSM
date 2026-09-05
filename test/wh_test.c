@@ -32,6 +32,7 @@
 
 /* Individual unit test drivers */
 #include "wh_test_comm.h"
+#include "wh_test_transport_mei.h"
 #include "wh_test_flash_ramsim.h"
 #include "wh_test_nvm_flash.h"
 #include "wh_test_crypto.h"
@@ -87,6 +88,7 @@ int whTest_Unit(void)
 
     /* Comm tests */
     WH_TEST_ASSERT(0 == whTest_Comm());
+    WH_TEST_ASSERT(0 == whTest_TransportMei());
     WH_TEST_ASSERT(0 == whTest_ClientServer());
 
 #ifndef WOLFHSM_CFG_NO_CRYPTO
