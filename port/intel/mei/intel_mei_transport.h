@@ -95,7 +95,8 @@ typedef struct {
     const void*           devConfig;  /* backend configuration */
     uint16_t              maxMsg; /* per-message limit override; 0 = use the
                                    * backend-discovered value */
-    uint8_t               WH_PAD[2];
+    uint8_t               WH_PAD[6]; /* pads to pointer alignment on both
+                                      * 32- and 64-bit targets */
 } intelMeiTransportConfig;
 
 /** Shared transport context (used by both the client and server bindings) */

@@ -97,6 +97,18 @@ int intelMeiSim_InjectRaw(intelMeiSimContext* ctx, const void* buf,
     return 0;
 }
 
+void intelMeiSim_Destroy(intelMeiSimContext* ctx)
+{
+    if (ctx == NULL) {
+        return;
+    }
+    if (ctx->fd_p1 != 0) {
+        close(ctx->fd_p1 - 1);
+        ctx->fd_p1 = 0;
+    }
+    ctx->opened = 0;
+}
+
 static int intelMeiSim_Open(void* devContext, const void* devConfig,
                             uint32_t* out_maxMsg)
 {
@@ -110,6 +122,7 @@ static int intelMeiSim_Open(void* devContext, const void* devConfig,
         /* Not paired; the sim is pre-connected via intelMeiSim_CreatePair */
         return WH_ERROR_ABORTED;
     }
+    d->opened   = 1;
     *out_maxMsg = d->maxMsg;
     return 0;
 }
@@ -121,10 +134,10 @@ static int intelMeiSim_Close(void* devContext)
     if (d == NULL) {
         return WH_ERROR_BADARGS;
     }
-    if (d->fd_p1 != 0) {
-        close(d->fd_p1 - 1);
-        d->fd_p1 = 0;
-    }
+    /* Soft close: the endpoint persists so a later Open can reconnect, the
+     * way a real /dev/mei client can be reopened.  intelMeiSim_Destroy()
+     * releases the descriptor. */
+    d->opened = 0;
     return 0;
 }
 
@@ -137,7 +150,7 @@ static int intelMeiSim_WriteMsg(void* devContext, const void* buf,
     if ((d == NULL) || (buf == NULL) || (len == 0)) {
         return WH_ERROR_BADARGS;
     }
-    if (d->fd_p1 == 0) {
+    if ((d->fd_p1 == 0) || (d->opened == 0)) {
         return WH_ERROR_ABORTED;
     }
     if (d->failNext != 0) {
@@ -177,7 +190,7 @@ static int intelMeiSim_ReadMsg(void* devContext, void* buf, uint16_t bufLen,
     if ((d == NULL) || (buf == NULL) || (bufLen == 0) || (out_len == NULL)) {
         return WH_ERROR_BADARGS;
     }
-    if (d->fd_p1 == 0) {
+    if ((d->fd_p1 == 0) || (d->opened == 0)) {
         return WH_ERROR_ABORTED;
     }
     if (d->failNext != 0) {

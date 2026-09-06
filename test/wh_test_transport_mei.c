@@ -35,13 +35,29 @@
 #if defined(WOLFHSM_CFG_TEST_POSIX) && defined(WOLFHSM_CFG_ENABLE_CLIENT) && \
     defined(WOLFHSM_CFG_ENABLE_SERVER)
 
+#include <pthread.h>
+
 #include "wolfhsm/wh_error.h"
 #include "wolfhsm/wh_comm.h"
+#include "wolfhsm/wh_client.h"
+#include "wolfhsm/wh_server.h"
+#include "wolfhsm/wh_nvm.h"
+#include "wolfhsm/wh_nvm_flash.h"
+#include "wolfhsm/wh_flash_ramsim.h"
 
 #include "port/intel/mei/intel_mei_transport.h"
 #include "port/intel/mei/intel_mei_sim.h"
 
 #include "wh_test_transport_mei.h"
+#include "wh_test_clientserver.h"
+#ifndef WOLFHSM_CFG_NO_CRYPTO
+#include "wolfssl/wolfcrypt/settings.h"
+#include "wolfssl/wolfcrypt/random.h"
+#include "wh_test_crypto.h"
+#ifdef WOLFHSM_CFG_KEYWRAP
+#include "wh_test_keywrap.h"
+#endif
+#endif
 
 #define WH_TEST_MEI_RETRIES 10000
 
@@ -103,6 +119,8 @@ static void whTest_MeiTeardown(void)
 {
     (void)wh_CommClient_Cleanup(&gClient);
     (void)wh_CommServer_Cleanup(&gServer);
+    intelMeiSim_Destroy(&gClientSim);
+    intelMeiSim_Destroy(&gServerSim);
 }
 
 /* One echo round trip of dataSz bytes, retrying NOTREADY on every step */
@@ -257,6 +275,180 @@ static int whTest_MeiFaults(void)
     return 0;
 }
 
+/* Full wolfHSM acceptance over the MEI sim at the smallest expected HECI
+ * MTU: a complete server (ramsim-flash NVM, crypto) on one thread, the
+ * client/server and crypto client test batteries on the other, every
+ * message fragmented by the transport. */
+
+#define WH_TEST_MEI_FLASH_RAM_SIZE (1024 * 1024)
+
+static uint8_t gFlashMem[WH_TEST_MEI_FLASH_RAM_SIZE];
+
+typedef int (*whTestMeiClientFn)(whClientConfig* cf);
+
+typedef struct {
+    whTestMeiClientFn fn;
+    whClientConfig*   cf;
+} whTestMeiClientArgs;
+
+/* Set by the client task when its battery completes; the server loop keeps
+ * serving (re-arming across client init/cleanup cycles, which the crypto
+ * battery performs several times) until then. */
+static volatile int gMeiClientDone = 0;
+
+static void* whTest_MeiClientTask(void* arg)
+{
+    whTestMeiClientArgs* a  = (whTestMeiClientArgs*)arg;
+    int                  rc = a->fn(a->cf);
+    gMeiClientDone           = 1;
+    WH_TEST_ASSERT(0 == rc);
+    return NULL;
+}
+
+static void* whTest_MeiServerTask(void* cf)
+{
+    static whServerContext server[1];
+    whCommConnected        connected = WH_COMM_CONNECTED;
+    int                    ret;
+
+    memset(server, 0, sizeof(server));
+    WH_TEST_ASSERT(0 == wh_Server_Init(server, (whServerConfig*)cf));
+    WH_TEST_ASSERT(0 == wh_Server_SetConnected(server, WH_COMM_CONNECTED));
+
+    while (gMeiClientDone == 0) {
+        ret = wh_Server_HandleRequestMessage(server);
+        if ((ret != WH_ERROR_NOTREADY) && (ret != WH_ERROR_OK)) {
+            WH_ERROR_PRINT("[mei server] HandleRequestMessage ret=%d\n", ret);
+            break;
+        }
+        /* A client comm-close drops connected; re-arm so the client's next
+         * init/cleanup cycle is served by this same loop */
+        (void)wh_Server_GetConnected(server, &connected);
+        if (connected != WH_COMM_CONNECTED) {
+            (void)wh_Server_SetConnected(server, WH_COMM_CONNECTED);
+        }
+    }
+    WH_TEST_ASSERT(0 == wh_Server_Cleanup(server));
+    return NULL;
+}
+
+/* One client test battery against a full server over a fresh sim pair */
+static int whTest_MeiAcceptance(uint32_t maxMsg, whTestMeiClientFn clientFn)
+{
+    static intelMeiTransportConfig clientTpCfg;
+    static intelMeiTransportConfig serverTpCfg;
+    static whTransportClientCb     clientTpCb[1] = {IMT_CLIENT_CB};
+    static whTransportServerCb     serverTpCb[1] = {IMT_SERVER_CB};
+    static whCommClientConfig      cc_conf[1];
+    static whCommServerConfig      cs_conf[1];
+    static whClientConfig          c_conf[1];
+    static whFlashRamsimCtx        fc[1];
+    static whFlashRamsimCfg        fc_conf[1];
+    static const whFlashCb         fcb[1] = {WH_FLASH_RAMSIM_CB};
+    static whTestNvmBackendUnion   nvm_setup;
+    static whNvmConfig             n_conf[1];
+    static whNvmContext            nvm[1];
+#ifndef WOLFHSM_CFG_NO_CRYPTO
+    static whServerCryptoContext   crypto[1];
+#endif
+    static whServerConfig          s_conf[1];
+
+    pthread_t           cthread;
+    pthread_t           sthread;
+    void*               retval = NULL;
+    int                 rc;
+    whTestMeiClientArgs cargs;
+
+    WH_TEST_RETURN_ON_FAIL(
+        intelMeiSim_CreatePair(&gClientSim, &gServerSim, maxMsg));
+
+    memset(&clientTpCfg, 0, sizeof(clientTpCfg));
+    clientTpCfg.ops        = &intelMeiSimDevOps;
+    clientTpCfg.devContext = &gClientSim;
+
+    memset(&serverTpCfg, 0, sizeof(serverTpCfg));
+    serverTpCfg.ops        = &intelMeiSimDevOps;
+    serverTpCfg.devContext = &gServerSim;
+
+    memset(&gClientCtx, 0, sizeof(gClientCtx));
+    memset(&gServerCtx, 0, sizeof(gServerCtx));
+
+    memset(cc_conf, 0, sizeof(cc_conf));
+    cc_conf[0].transport_cb      = clientTpCb;
+    cc_conf[0].transport_context = &gClientCtx;
+    cc_conf[0].transport_config  = &clientTpCfg;
+    cc_conf[0].client_id         = WH_TEST_DEFAULT_CLIENT_ID;
+
+    memset(c_conf, 0, sizeof(c_conf));
+    c_conf[0].comm = cc_conf;
+
+    memset(cs_conf, 0, sizeof(cs_conf));
+    cs_conf[0].transport_cb      = serverTpCb;
+    cs_conf[0].transport_context = &gServerCtx;
+    cs_conf[0].transport_config  = &serverTpCfg;
+    cs_conf[0].server_id         = 124;
+
+    memset(gFlashMem, 0, sizeof(gFlashMem));
+    memset(fc, 0, sizeof(fc));
+    memset(fc_conf, 0, sizeof(fc_conf));
+    fc_conf[0].size       = WH_TEST_MEI_FLASH_RAM_SIZE;
+    fc_conf[0].sectorSize = WH_TEST_MEI_FLASH_RAM_SIZE / 2;
+    fc_conf[0].pageSize   = 8;
+    fc_conf[0].erasedByte = (uint8_t)0;
+    fc_conf[0].memory     = gFlashMem;
+
+    memset(&nvm_setup, 0, sizeof(nvm_setup));
+    memset(n_conf, 0, sizeof(n_conf));
+    memset(nvm, 0, sizeof(nvm));
+    WH_TEST_RETURN_ON_FAIL(whTest_NvmCfgBackend(WH_NVM_TEST_BACKEND_FLASH,
+                                                &nvm_setup, n_conf, fc_conf,
+                                                fc, fcb));
+
+    memset(s_conf, 0, sizeof(s_conf));
+    s_conf[0].comm_config = cs_conf;
+    s_conf[0].nvm         = nvm;
+#ifndef WOLFHSM_CFG_NO_CRYPTO
+    memset(crypto, 0, sizeof(crypto));
+    crypto[0].devId = INVALID_DEVID;
+    s_conf[0].crypto = crypto;
+    s_conf[0].devId  = INVALID_DEVID;
+#endif
+
+    WH_TEST_RETURN_ON_FAIL(wh_Nvm_Init(nvm, n_conf));
+#ifndef WOLFHSM_CFG_NO_CRYPTO
+    WH_TEST_RETURN_ON_FAIL(wolfCrypt_Init());
+    WH_TEST_RETURN_ON_FAIL(wc_InitRng_ex(crypto[0].rng, NULL,
+                                         crypto[0].devId));
+#endif
+
+    cargs.fn       = clientFn;
+    cargs.cf       = c_conf;
+    gMeiClientDone = 0;
+    rc = pthread_create(&sthread, NULL, whTest_MeiServerTask, s_conf);
+    if (rc == 0) {
+        rc = pthread_create(&cthread, NULL, whTest_MeiClientTask, &cargs);
+        if (rc == 0) {
+            /* The server loop exits on the client's comm close */
+            pthread_join(cthread, &retval);
+            pthread_join(sthread, &retval);
+        }
+        else {
+            pthread_cancel(sthread);
+            pthread_join(sthread, &retval);
+        }
+    }
+    WH_TEST_ASSERT_RETURN(rc == 0);
+
+    wh_Nvm_Cleanup(nvm);
+#ifndef WOLFHSM_CFG_NO_CRYPTO
+    wc_FreeRng(crypto[0].rng);
+    wolfCrypt_Cleanup();
+#endif
+    intelMeiSim_Destroy(&gClientSim);
+    intelMeiSim_Destroy(&gServerSim);
+    return 0;
+}
+
 int whTest_TransportMei(void)
 {
     WH_TEST_PRINT("Testing Intel MEI transport (simulator)...\n");
@@ -264,6 +456,18 @@ int whTest_TransportMei(void)
     WH_TEST_RETURN_ON_FAIL(whTest_MeiFragSweep(1024));
     WH_TEST_RETURN_ON_FAIL(whTest_MeiFragSweep(4096));
     WH_TEST_RETURN_ON_FAIL(whTest_MeiFaults());
+    WH_TEST_PRINT("Testing client/server battery over MEI sim @512B...\n");
+    WH_TEST_RETURN_ON_FAIL(
+        whTest_MeiAcceptance(512, whTest_ClientServerClientConfig));
+#ifndef WOLFHSM_CFG_NO_CRYPTO
+    WH_TEST_PRINT("Testing crypto battery over MEI sim @512B...\n");
+    WH_TEST_RETURN_ON_FAIL(whTest_MeiAcceptance(512, whTest_CryptoClientConfig));
+#ifdef WOLFHSM_CFG_KEYWRAP
+    WH_TEST_PRINT("Testing keywrap battery over MEI sim @512B...\n");
+    WH_TEST_RETURN_ON_FAIL(
+        whTest_MeiAcceptance(512, whTest_KeyWrapClientConfig));
+#endif
+#endif
     WH_TEST_PRINT("MEI TRANSPORT TESTS PASSED\n");
     return 0;
 }

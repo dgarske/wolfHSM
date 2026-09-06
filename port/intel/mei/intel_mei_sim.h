@@ -46,14 +46,20 @@ typedef struct {
     uint32_t notReadyWrites; /* fail the next N WriteMsg calls NOTREADY */
     uint32_t notReadyReads;  /* fail the next N ReadMsg calls NOTREADY */
     int      fd_p1;          /* fd plus 1 so 0 is invalid */
+    uint8_t  opened;         /* devops Open/Close state (fd persists across
+                              * a Close so the device can be reopened, like
+                              * a real /dev/mei client) */
     uint8_t  failNext;       /* force the next op to WH_ERROR_ABORTED */
-    uint8_t  WH_PAD[3];
+    uint8_t  WH_PAD[2];
 } intelMeiSimContext;
 
 /* Create a connected simulator pair with the given per-message limit
  * (0 -> IMS_DEFAULT_MAX_MSG).  Both contexts are fully initialized. */
 int intelMeiSim_CreatePair(intelMeiSimContext* a, intelMeiSimContext* b,
                            uint32_t maxMsg);
+
+/* Tear down one end of a pair for real (closes the descriptor) */
+void intelMeiSim_Destroy(intelMeiSimContext* ctx);
 
 /* Inject one raw message into the peer of ctx (as if a foreign/corrupt
  * message arrived), for desync testing. */

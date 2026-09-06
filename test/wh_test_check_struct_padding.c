@@ -194,4 +194,21 @@ whMessageCert_VerifyAcertRequest whMessageCert_VerifyAcertRequest_test;
 #endif /* WOLFHSM_CFG_CERTIFICATE_MANAGER_ACERT */
 #endif /* WOLFHSM_CFG_CERTIFICATE_MANAGER */
 
+/* Intel MEI transport: the wire format itself is byte-serialized (no on-wire
+ * structs), so these checks cover the config/context/devops structures for
+ * cross-toolchain hygiene */
+#if defined(WOLFHSM_CFG_TEST_POSIX)
+#include "port/intel/mei/intel_mei_transport.h"
+intelMeiTransportConfig  intelMeiTransportConfig_test;
+intelMeiTransportContext intelMeiTransportContext_test;
+intelMeiDevOps           intelMeiDevOps_test;
+#include "port/intel/mei/intel_mei_sim.h"
+intelMeiSimContext intelMeiSimContext_test;
+#ifdef __linux__
+#include "port/intel/mei/intel_mei_linux.h"
+intelMeiLinuxConfig  intelMeiLinuxConfig_test;
+intelMeiLinuxContext intelMeiLinuxContext_test;
+#endif
+#endif /* WOLFHSM_CFG_TEST_POSIX */
+
 #endif /* WH_TEST_CHECK_STRUCT_PADDING_C_ */
