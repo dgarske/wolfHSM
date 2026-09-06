@@ -28,9 +28,11 @@
 
 #include <sys/types.h>
 #include <sys/socket.h>
+#include <sys/un.h>
 #include <unistd.h>
 #include <fcntl.h>
 #include <errno.h>
+#include <time.h>
 
 #include "wolfhsm/wh_settings.h"
 #include "wolfhsm/wh_error.h"
@@ -106,7 +108,103 @@ void intelMeiSim_Destroy(intelMeiSimContext* ctx)
         close(ctx->fd_p1 - 1);
         ctx->fd_p1 = 0;
     }
+    if (ctx->listenFd_p1 != 0) {
+        close(ctx->listenFd_p1 - 1);
+        ctx->listenFd_p1 = 0;
+        if (ctx->path != NULL) {
+            (void)unlink(ctx->path);
+        }
+    }
+    ctx->path   = NULL;
     ctx->opened = 0;
+}
+
+/* Named mode: bind/listen (server) or connect with a short retry (client) */
+static int intelMeiSim_OpenNamed(intelMeiSimContext* d,
+                                 const intelMeiSimConfig* cf)
+{
+    struct sockaddr_un addr;
+    int                fd;
+    int                rc;
+    int                tries;
+    struct timespec    ts;
+
+    if ((cf->path == NULL) ||
+        (strlen(cf->path) >= sizeof(addr.sun_path))) {
+        return WH_ERROR_BADARGS;
+    }
+    d->maxMsg = (cf->maxMsg != 0) ? cf->maxMsg : IMS_DEFAULT_MAX_MSG;
+
+    memset(&addr, 0, sizeof(addr));
+    addr.sun_family = AF_UNIX;
+    strncpy(addr.sun_path, cf->path, sizeof(addr.sun_path) - 1);
+
+    fd = socket(AF_UNIX, SOCK_SEQPACKET, 0);
+    if (fd < 0) {
+        return WH_ERROR_ABORTED;
+    }
+
+    if (cf->isServer != 0) {
+        (void)unlink(cf->path);
+        rc = bind(fd, (struct sockaddr*)&addr, sizeof(addr));
+        if (rc == 0) {
+            rc = listen(fd, 1);
+        }
+        if ((rc != 0) || (intelMeiSim_MakeNonBlocking(fd) != 0)) {
+            close(fd);
+            return WH_ERROR_ABORTED;
+        }
+        d->listenFd_p1 = fd + 1;
+        d->path        = cf->path;
+    }
+    else {
+        /* Retry briefly so the server process may be started first */
+        rc = -1;
+        for (tries = 0; tries < 50; tries++) {
+            rc = connect(fd, (struct sockaddr*)&addr, sizeof(addr));
+            if (rc == 0) {
+                break;
+            }
+            ts.tv_sec  = 0;
+            ts.tv_nsec = 100000000L; /* 100ms */
+            (void)nanosleep(&ts, NULL);
+        }
+        if ((rc != 0) || (intelMeiSim_MakeNonBlocking(fd) != 0)) {
+            close(fd);
+            return WH_ERROR_ABORTED;
+        }
+        d->fd_p1 = fd + 1;
+    }
+    return 0;
+}
+
+/* Named-mode server: accept the client lazily; 0 when a data fd is ready */
+static int intelMeiSim_Accept(intelMeiSimContext* d)
+{
+    int fd;
+
+    if (d->fd_p1 != 0) {
+        return 0;
+    }
+    if (d->listenFd_p1 == 0) {
+        return WH_ERROR_ABORTED;
+    }
+    fd = accept(d->listenFd_p1 - 1, NULL, NULL);
+    if (fd < 0) {
+        switch (errno) {
+            case EAGAIN:
+            case EINTR:
+                return WH_ERROR_NOTREADY;
+            default:
+                return WH_ERROR_ABORTED;
+        }
+    }
+    if (intelMeiSim_MakeNonBlocking(fd) != 0) {
+        close(fd);
+        return WH_ERROR_ABORTED;
+    }
+    d->fd_p1 = fd + 1;
+    return 0;
 }
 
 static int intelMeiSim_Open(void* devContext, const void* devConfig,
@@ -118,9 +216,18 @@ static int intelMeiSim_Open(void* devContext, const void* devConfig,
     if ((d == NULL) || (out_maxMsg == NULL)) {
         return WH_ERROR_BADARGS;
     }
-    if (d->fd_p1 == 0) {
-        /* Not paired; the sim is pre-connected via intelMeiSim_CreatePair */
-        return WH_ERROR_ABORTED;
+    if ((d->fd_p1 == 0) && (d->listenFd_p1 == 0)) {
+        /* Not yet an endpoint: named mode needs a config; pair mode is
+         * pre-connected via intelMeiSim_CreatePair */
+        const intelMeiSimConfig* cf = (const intelMeiSimConfig*)devConfig;
+        int                      rc;
+        if (cf == NULL) {
+            return WH_ERROR_ABORTED;
+        }
+        rc = intelMeiSim_OpenNamed(d, cf);
+        if (rc != 0) {
+            return rc;
+        }
     }
     d->opened   = 1;
     *out_maxMsg = d->maxMsg;
@@ -150,8 +257,14 @@ static int intelMeiSim_WriteMsg(void* devContext, const void* buf,
     if ((d == NULL) || (buf == NULL) || (len == 0)) {
         return WH_ERROR_BADARGS;
     }
-    if ((d->fd_p1 == 0) || (d->opened == 0)) {
+    if (d->opened == 0) {
         return WH_ERROR_ABORTED;
+    }
+    if (d->fd_p1 == 0) {
+        int arc = intelMeiSim_Accept(d);
+        if (arc != 0) {
+            return arc;
+        }
     }
     if (d->failNext != 0) {
         d->failNext = 0;
@@ -190,8 +303,14 @@ static int intelMeiSim_ReadMsg(void* devContext, void* buf, uint16_t bufLen,
     if ((d == NULL) || (buf == NULL) || (bufLen == 0) || (out_len == NULL)) {
         return WH_ERROR_BADARGS;
     }
-    if ((d->fd_p1 == 0) || (d->opened == 0)) {
+    if (d->opened == 0) {
         return WH_ERROR_ABORTED;
+    }
+    if (d->fd_p1 == 0) {
+        int arc = intelMeiSim_Accept(d);
+        if (arc != 0) {
+            return arc;
+        }
     }
     if (d->failNext != 0) {
         d->failNext = 0;

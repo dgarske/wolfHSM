@@ -25,11 +25,15 @@
  * MTU) so the fragmentation core is exercised without hardware.  Supports
  * NOTREADY injection for backpressure testing.
  *
- * Usage: intelMeiSim_CreatePair() connects two contexts (one for the
- * client transport, one for the server transport); each side then passes
- * its context and &intelMeiSimDevOps in its intelMeiTransportConfig with
- * devConfig NULL (the pair is pre-connected, Open is a no-op that reports
- * the configured message limit).
+ * Two modes:
+ * - Pair mode (in-process, tests): intelMeiSim_CreatePair() connects two
+ *   contexts (one for the client transport, one for the server transport);
+ *   each side then passes its context and &intelMeiSimDevOps in its
+ *   intelMeiTransportConfig with devConfig NULL.
+ * - Named mode (cross-process, demos): pass an intelMeiSimConfig as the
+ *   devConfig; the server side binds and listens on an AF_UNIX
+ *   SOCK_SEQPACKET path (accepting lazily), the client side connects to it
+ *   (retrying briefly so the server may be started first).
  */
 
 #ifndef PORT_INTEL_MEI_INTEL_MEI_SIM_H_
@@ -41,12 +45,22 @@
 
 #define IMS_DEFAULT_MAX_MSG 512
 
+/* Named-mode configuration (devConfig for Open) */
 typedef struct {
+    const char* path;     /* AF_UNIX socket path */
+    uint32_t    maxMsg;   /* 0 -> IMS_DEFAULT_MAX_MSG */
+    uint8_t     isServer; /* 1 = bind/listen side */
+    uint8_t     WH_PAD[3];
+} intelMeiSimConfig;
+
+typedef struct {
+    const char* path;        /* named mode: bound path (server unlinks it) */
     uint32_t maxMsg;
     uint32_t notReadyWrites; /* fail the next N WriteMsg calls NOTREADY */
     uint32_t notReadyReads;  /* fail the next N ReadMsg calls NOTREADY */
-    int      fd_p1;          /* fd plus 1 so 0 is invalid */
-    uint8_t  opened;         /* devops Open/Close state (fd persists across
+    int      fd_p1;          /* data fd plus 1 so 0 is invalid */
+    int      listenFd_p1;    /* named-mode server listen fd plus 1 */
+    uint8_t  opened;         /* devops Open/Close state (fds persist across
                               * a Close so the device can be reopened, like
                               * a real /dev/mei client) */
     uint8_t  failNext;       /* force the next op to WH_ERROR_ABORTED */

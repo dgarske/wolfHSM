@@ -203,6 +203,7 @@ intelMeiTransportConfig  intelMeiTransportConfig_test;
 intelMeiTransportContext intelMeiTransportContext_test;
 intelMeiDevOps           intelMeiDevOps_test;
 #include "port/intel/mei/intel_mei_sim.h"
+intelMeiSimConfig  intelMeiSimConfig_test;
 intelMeiSimContext intelMeiSimContext_test;
 #ifdef __linux__
 #include "port/intel/mei/intel_mei_linux.h"
