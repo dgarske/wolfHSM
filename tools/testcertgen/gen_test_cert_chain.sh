@@ -30,7 +30,7 @@ echo "Generating Root CA for Chain A..."
 openssl genrsa -out ca/root_a/private/pem/root_a.key 4096
 
 # Create PEM format root certificate
-openssl req -new -x509 -days 3650 -sha256 \
+openssl req -new -x509 -days 7300 -sha256 \
     -key ca/root_a/private/pem/root_a.key \
     -out ca/root_a/certs/pem/root_a.crt \
     -subj "$ROOT_A_SUBJECT" \
@@ -51,7 +51,7 @@ openssl req -new -sha256 \
     -subj "$INTERMEDIATE_A_SUBJECT"
 
 # Step 3A: Sign Intermediate A certificate with Root A
-openssl x509 -req -days 1825 -sha256 \
+openssl x509 -req -days 7300 -sha256 \
     -in ca/intermediate_a/intermediate_a.csr \
     -out ca/intermediate_a/certs/pem/intermediate_a.crt \
     -CA ca/root_a/certs/pem/root_a.crt \
@@ -73,7 +73,7 @@ openssl req -new -sha256 \
     -subj "$LEAF_A_SUBJECT"
 
 # Step 5A: Sign Leaf A certificate with Intermediate A
-openssl x509 -req -days 365 -sha256 \
+openssl x509 -req -days 7300 -sha256 \
     -in ca/leaf_a/leaf_a.csr \
     -out ca/leaf_a/certs/pem/leaf_a.crt \
     -CA ca/intermediate_a/certs/pem/intermediate_a.crt \
@@ -115,7 +115,7 @@ echo "Generating Root CA for Chain B..."
 openssl genrsa -out ca/root_b/private/pem/root_b.key 4096
 
 # Create PEM format root certificate
-openssl req -new -x509 -days 3650 -sha256 \
+openssl req -new -x509 -days 7300 -sha256 \
     -key ca/root_b/private/pem/root_b.key \
     -out ca/root_b/certs/pem/root_b.crt \
     -subj "$ROOT_B_SUBJECT" \
@@ -136,7 +136,7 @@ openssl req -new -sha256 \
     -subj "$INTERMEDIATE_B_SUBJECT"
 
 # Step 3B: Sign Intermediate B certificate with Root B
-openssl x509 -req -days 1825 -sha256 \
+openssl x509 -req -days 7300 -sha256 \
     -in ca/intermediate_b/intermediate_b.csr \
     -out ca/intermediate_b/certs/pem/intermediate_b.crt \
     -CA ca/root_b/certs/pem/root_b.crt \
@@ -158,7 +158,7 @@ openssl req -new -sha256 \
     -subj "$LEAF_B_SUBJECT"
 
 # Step 5B: Sign Leaf B certificate with Intermediate B
-openssl x509 -req -days 365 -sha256 \
+openssl x509 -req -days 7300 -sha256 \
     -in ca/leaf_b/leaf_b.csr \
     -out ca/leaf_b/certs/pem/leaf_b.crt \
     -CA ca/intermediate_b/certs/pem/intermediate_b.crt \
