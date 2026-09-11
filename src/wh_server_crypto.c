@@ -4225,9 +4225,9 @@ static int _HandleMlDsaSign(whServerContext* ctx, uint16_t magic,
         /* load the private key */
         ret = wh_Server_MlDsaKeyCacheExport(ctx, key_id, key);
         if (ret == WH_ERROR_OK) {
-            /* sign the input */
-            ret     = wc_MlDsaKey_Sign(key, res_out, &res_len, in, in_len,
-                                       ctx->crypto->rng);
+            /* sign the input (empty FIPS 204 context) */
+            ret = wc_MlDsaKey_SignCtx(key, NULL, 0, res_out, &res_len, in,
+                                      in_len, ctx->crypto->rng);
         }
         wc_MlDsaKey_Free(key);
     }
@@ -4315,9 +4315,9 @@ static int _HandleMlDsaVerify(whServerContext* ctx, uint16_t magic,
         /* load the public key */
         ret = wh_Server_MlDsaKeyCacheExport(ctx, key_id, key);
         if (ret == WH_ERROR_OK) {
-            /* verify the signature */
-            ret = wc_MlDsaKey_Verify(key, req_sig, sig_len, req_hash, hash_len,
-                                     &result);
+            /* verify the signature (empty FIPS 204 context) */
+            ret = wc_MlDsaKey_VerifyCtx(key, req_sig, sig_len, NULL, 0,
+                                        req_hash, hash_len, &result);
         }
         wc_MlDsaKey_Free(key);
     }
@@ -5399,10 +5399,11 @@ static int _HandleMlDsaSignDma(whServerContext* ctx, uint16_t magic,
                     WH_DMA_OPER_CLIENT_WRITE_PRE, (whServerDmaFlags){0});
 
                 if (ret == 0) {
-                    /* Sign the message */
+                    /* Sign the message (empty FIPS 204 context) */
                     word32 sigLen = req.sig.sz;
-                    ret = wc_MlDsaKey_Sign(key, sigAddr, &sigLen, msgAddr,
-                                           req.msg.sz, ctx->crypto->rng);
+                    ret = wc_MlDsaKey_SignCtx(key, NULL, 0, sigAddr, &sigLen,
+                                              msgAddr, req.msg.sz,
+                                              ctx->crypto->rng);
 
                     if (ret == 0) {
                         /* Post-write processing of signature buffer */
@@ -5512,9 +5513,9 @@ static int _HandleMlDsaVerifyDma(whServerContext* ctx, uint16_t magic,
                 WH_DMA_OPER_CLIENT_READ_PRE, (whServerDmaFlags){0});
 
             if (ret == 0) {
-                /* Verify the signature */
-                ret = wc_MlDsaKey_Verify(key, sigAddr, req.sig.sz, msgAddr,
-                                         req.msg.sz, &verified);
+                /* Verify the signature (empty FIPS 204 context) */
+                ret = wc_MlDsaKey_VerifyCtx(key, sigAddr, req.sig.sz, NULL, 0,
+                                            msgAddr, req.msg.sz, &verified);
 
                 if (ret == 0) {
                     /* Post-read processing of signature buffer */
