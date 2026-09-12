@@ -126,6 +126,14 @@ int wh_Client_Cleanup(whClientContext* c)
     }
 
 #ifndef WOLFHSM_CFG_NO_CRYPTO
+    /* Unregister the crypto callback devices this client registered in
+     * wh_Client_Init(). Current wolfSSL rejects re-registering an already
+     * registered devId (ALREADY_E), so a client must release its devIds on
+     * cleanup or a later wh_Client_Init() with the same devId fails. */
+    (void)wc_CryptoCb_UnRegisterDevice(WH_DEV_ID);
+#ifdef WOLFHSM_CFG_DMA
+    (void)wc_CryptoCb_UnRegisterDevice(WH_DEV_ID_DMA);
+#endif /* WOLFHSM_CFG_DMA */
     (void)wolfCrypt_Cleanup();
 #endif  /* !WOLFHSM_CFG_NO_CRYPTO */
 
