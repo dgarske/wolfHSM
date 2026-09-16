@@ -41,6 +41,9 @@
 #include "wolfhsm/wh_message.h"
 #include "wolfhsm/wh_transport_mem.h"
 #include "wolfhsm/wh_client.h"
+#if !defined(WOLFHSM_CFG_NO_CRYPTO) && defined(WOLF_CRYPTO_CB)
+#include "wolfssl/wolfcrypt/cryptocb.h"
+#endif
 #include "wolfhsm/wh_server.h"
 #include "wolfhsm/wh_server_keystore.h"
 #include "wolfhsm/wh_nvm.h"
@@ -1622,8 +1625,18 @@ static int whTest_MultiClientSequential(void)
     /* Future test suites here */
 
     /* Cleanup */
+#if !defined(WOLFHSM_CFG_NO_CRYPTO) && defined(WOLF_CRYPTO_CB)
+    /* client2 shared client1's WH_DEV_ID registration (ALREADY_E), so cleaning
+     * it up first must leave the devId registered; only the owner (client1)
+     * releases it. */
+    wh_Client_Cleanup(client2);
+    WH_TEST_ASSERT_RETURN(wc_CryptoCb_IsDeviceRegistered(WH_DEV_ID) == 1);
+    wh_Client_Cleanup(client1);
+    WH_TEST_ASSERT_RETURN(wc_CryptoCb_IsDeviceRegistered(WH_DEV_ID) == 0);
+#else
     wh_Client_Cleanup(client1);
     wh_Client_Cleanup(client2);
+#endif
     wh_Server_Cleanup(server1);
     wh_Server_Cleanup(server2);
 #if !defined(WOLFHSM_CFG_NO_CRYPTO)

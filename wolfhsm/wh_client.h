@@ -112,6 +112,13 @@ struct whClientContext_t {
     whClientDmaContext dma;
 #endif /* WOLFHSM_CFG_DMA */
     whCommClient comm[1];
+    /* Which crypto callback devIds this instance actually registered (vs
+     * shared with an earlier client via ALREADY_E), so cleanup only
+     * unregisters what it owns. */
+    unsigned char cryptoCbOwned;
+#ifdef WOLFHSM_CFG_DMA
+    unsigned char cryptoCbDmaOwned;
+#endif /* WOLFHSM_CFG_DMA */
 };
 
 struct whClientConfig_t {

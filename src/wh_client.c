@@ -89,7 +89,17 @@ int wh_Client_Init(whClientContext* c, const whClientConfig* config)
         if (rc == 0) {
             rc = wc_CryptoCb_RegisterDevice(WH_DEV_ID,
                     wh_Client_CryptoCb, c);
-            if (rc != 0) {
+            /* ALREADY_E: WH_DEV_ID is held by an earlier client and stays bound
+             * to it. Fine for keystore/NVM multi-client; crypto offload from
+             * more than one client at once would need distinct devIds. Only the
+             * instance that actually registered it may unregister it. */
+            if (rc == 0) {
+                c->cryptoCbOwned = 1;
+            }
+            else if (rc == ALREADY_E) {
+                rc = 0;
+            }
+            else {
                 rc = WH_ERROR_ABORTED;
             }
 
@@ -104,7 +114,13 @@ int wh_Client_Init(whClientContext* c, const whClientConfig* config)
 
                 rc = wc_CryptoCb_RegisterDevice(WH_DEV_ID_DMA,
                                                 wh_Client_CryptoCbDma, c);
-                if (rc != 0) {
+                if (rc == 0) {
+                    c->cryptoCbDmaOwned = 1;
+                }
+                else if (rc == ALREADY_E) {
+                    rc = 0;
+                }
+                else {
                     rc = WH_ERROR_ABORTED;
                 }
             }
@@ -126,13 +142,17 @@ int wh_Client_Cleanup(whClientContext* c)
     }
 
 #ifndef WOLFHSM_CFG_NO_CRYPTO
-    /* Unregister the crypto callback devices this client registered in
-     * wh_Client_Init(). Current wolfSSL rejects re-registering an already
-     * registered devId (ALREADY_E), so a client must release its devIds on
-     * cleanup or a later wh_Client_Init() with the same devId fails. */
-    (void)wc_CryptoCb_UnRegisterDevice(WH_DEV_ID);
+    /* Release only the devIds this instance registered (current wolfSSL rejects
+     * a duplicate registration, so an unreleased devId blocks a later init).
+     * A client that shared an earlier client's registration (ALREADY_E) does
+     * not own it and must not unregister it out from under that client. */
+    if (c->cryptoCbOwned) {
+        (void)wc_CryptoCb_UnRegisterDevice(WH_DEV_ID);
+    }
 #ifdef WOLFHSM_CFG_DMA
-    (void)wc_CryptoCb_UnRegisterDevice(WH_DEV_ID_DMA);
+    if (c->cryptoCbDmaOwned) {
+        (void)wc_CryptoCb_UnRegisterDevice(WH_DEV_ID_DMA);
+    }
 #endif /* WOLFHSM_CFG_DMA */
     (void)wolfCrypt_Cleanup();
 #endif  /* !WOLFHSM_CFG_NO_CRYPTO */
