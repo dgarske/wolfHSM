@@ -30,7 +30,7 @@ pki --pub --in caKey.der --type ecdsa --outform der > caPub.der
 
 # Create self-signed CA certificate
 echo "Create self-signed CA cert"
-pki --self --ca --lifetime 3650 \
+pki --self --ca --lifetime 7300 \
     --in caKey.der --type ecdsa \
     --dn "C=CH, O=Test, CN=RootCA" \
     --outform der > caCert.der
@@ -45,7 +45,7 @@ pki --pub --in dummyKey.der --type ecdsa --outform der > dummyPub.der
 
 # Issue certificate for dummy identity, signed by CA
 echo "Generate dummy ID cert"
-pki --issue --lifetime 365 \
+pki --issue --lifetime 7300 \
     --in dummyPub.der \
     --cacert caCert.der \
     --cakey caKey.der \
@@ -59,7 +59,7 @@ pki --acert \
     --issuerkey caKey.der \
     --issuercert caCert.der \
     --group "test-group" \
-    --lifetime 48 \
+    --lifetime 175200 \
     --outform der > attrCert.der
 
 # Show outputs
@@ -77,9 +77,9 @@ echo "=== Certificate Verification ==="
 # Verify dummy identity certificate against CA
 echo "Verifying dummy identity certificate..."
 if pki --verify --in dummyCert.der --cacert caCert.der; then
-    echo "✓ Dummy identity certificate verification successful"
+    echo "OK: Dummy identity certificate verification successful"
 else
-    echo "✗ Dummy identity certificate verification failed"
+    echo "ERROR: Dummy identity certificate verification failed"
     exit 1
 fi
 
